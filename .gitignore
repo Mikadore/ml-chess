@@ -1,0 +1,5 @@
+.github
+.venv
+
+**/__pycache__
+**/target
