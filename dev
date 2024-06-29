@@ -1,0 +1,10 @@
+#!/bin/bash
+export PYTHON_CONFIGURE_OPTS="--enable-shared"
+if [[ -d .venv ]]; then
+    source .venv/bin/activate
+    maturin develop
+    python chungus/cli.py $@
+else  
+    # Error if venv not present
+    echo "Please create a virtual environment in .venv"
+fi

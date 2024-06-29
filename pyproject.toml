@@ -1,0 +1,26 @@
+[build-system]
+requires = ["maturin>=1.6,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "chungus"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+]
+dynamic = ["version"]
+
+dependencies = [
+    "python-chess==1.999",
+    "tensorflow==2.16.1",
+    "numpy==1.26.4",
+    "click==8.1.7",
+    "maturin==1.6.0",
+]
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+profile = "release"
+rustc-args = ["-C", "target-cpu=native"]
