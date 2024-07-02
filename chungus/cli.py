@@ -45,8 +45,9 @@ def pgn_stat(filepath):
 
 @cli.command('train')
 @click.argument('filepath')
-def train(filepath):
-    positions = data.collect_positions(filepath)
+@click.option('--threads', default=None, required=False)
+def train(filepath, threads):
+    positions = data.collect_positions(filepath, threads)
 
 if __name__ == "__main__":
     cli()

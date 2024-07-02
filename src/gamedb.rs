@@ -6,9 +6,9 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
 
-mod data;
-mod pgn;
-mod serialization;
+pub mod game;
+pub mod pgn;
+pub mod serialization;
 
 fn pgn_to_bin_impl(
     pgn_path: &Path,
@@ -81,17 +81,17 @@ fn bin_to_pgn(bin_path: &str, pgn_path: &str, min_elo: i32, max_elo_diff: i32) -
 #[pyclass]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Game {
-    inner: data::Game,
+    inner: game::Game,
     outcome: String,
 }
 
 impl Game {
-    fn new(inner: data::Game) -> Self {
+    fn new(inner: game::Game) -> Self {
         Self {
             outcome: match inner.outcome {
-                data::Outcome::BlackWin => "0-1".to_string(),
-                data::Outcome::WhiteWin => "1-0".to_string(),
-                data::Outcome::Draw => "1/2-1/2".to_string(),
+                game::Outcome::BlackWin => "0-1".to_string(),
+                game::Outcome::WhiteWin => "1-0".to_string(),
+                game::Outcome::Draw => "1/2-1/2".to_string(),
             },
             inner,
         }

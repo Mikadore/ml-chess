@@ -1,4 +1,4 @@
-use super::data::*;
+use super::game::*;
 use eyre::{ensure, Result};
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter, ErrorKind, Read, Write};
@@ -73,7 +73,7 @@ impl<R: Read> Decoder<R> {
         Ok(Self { inner: r })
     }
 
-    pub fn read_game(&mut self) -> Result<Option<Game>> {
+    pub fn read_game_raw(&mut self) -> Result<Option<Vec<u8>>> {
         let mut lenbuf = [0; std::mem::size_of::<usize>()];
         if let Err(e) = self.inner.read_exact(&mut lenbuf) {
             if e.kind() == ErrorKind::UnexpectedEof {
@@ -87,7 +87,37 @@ impl<R: Read> Decoder<R> {
 
         let mut gamebuf = vec![0; game_len];
         self.inner.read_exact(&mut gamebuf)?;
-        Ok(Some(bincode::deserialize(&gamebuf)?))
+        Ok(Some(gamebuf))
+    }
+
+    pub fn read_game(&mut self) -> Result<Option<Game>> {
+        match self.read_game_raw() {
+            Ok(Some(gamebuf)) => Ok(Some(bincode::deserialize(&gamebuf)?)),
+            Ok(None) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn raw_iter(self) -> RawGameIter<R> {
+        RawGameIter { inner: self }
+    }
+}
+
+pub struct RawGameIter<R: Read> {
+    inner: Decoder<R>
+}
+
+impl<R: Read> Iterator for RawGameIter<R> {
+    type Item = Vec<u8>;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.read_game_raw().unwrap()
+    }
+}
+
+impl<R: Read> Iterator for Decoder<R> {
+    type Item = Game;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.read_game().unwrap()
     }
 }
 

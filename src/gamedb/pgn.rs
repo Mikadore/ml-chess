@@ -1,4 +1,4 @@
-use super::data::*;
+use super::game::*;
 use eyre::{ensure, Result};
 use pgn_reader::{SanPlus, Skip, Visitor};
 use shakmaty::{Chess, Position};
