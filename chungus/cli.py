@@ -3,7 +3,7 @@ from pathlib import Path
 
 import numpy as np
 import chessers
-import data, model
+import positions, model, dataset
 
 
 from util import fmtsize, num_cores
@@ -48,32 +48,21 @@ def pgn_stat(filepath):
 @cli.command('encode')
 @click.argument('filepath')
 @click.argument('savepath')
-@click.option('--threads', default=None, required=False)
-def encode(filepath, savepath, threads):
-    size = os.stat(filepath).st_size
-    start = time.time()
-    positions, outcomes = data.load_positions(filepath, num_cores() if not threads else int(threads))
-    end = time.time()
-    delta = end - start
-    throughput = size/delta
-    print(f"Processed {len(positions)} ({fmtsize(positions.nbytes + outcomes.nbytes)}b) positions in {delta:.2f}s ({fmtsize(throughput)}b/s)")
-    print(f"Input  shape: {positions.shape}")
-    print(f"Output shape: {outcomes.shape}")
-    np.savez_compressed(savepath, x=positions, y=outcomes)
-    print(f"Saved training data to {savepath}")
+@click.option('--games', default='10000')
+def encode(filepath, savepath, games):
+    positions.encode(filepath, int(games), savepath)
+
 
 @cli.command('train')
-@click.option('--dataset', default='train')
-def train(dataset):
+@click.argument('datasets', nargs=-1)
+@click.option('--epochs', default=model.CZECHERNET_TRAIN_EPOCHS)
+@click.option('--batch_size', default=model.CZECHERNET_TRAIN_BATCH_SIZE)
+def train(datasets, epochs, batch_size):
+    datasets = [str(dataset) for dataset in datasets]
+    print(f"Training using {','.join(datasets)}")
     net = model.CzecherNet()    
-    data = np.load(f"data/{dataset}.npz")
-    train_x = data['x']
-    train_y = data['y']
-
-    
-    print(f"Loaded training data (in: {train_x.shape}, out: {train_y.shape})")
     net.show()
-    net.train(train_x, train_y)
+    net.train(datasets, epochs=epochs, batch_size=batch_size)
 
 @cli.command('model_stat')
 def model_stat():
@@ -83,6 +72,10 @@ def model_stat():
     test_y = data['y']
     net.evaluate(test_x, test_y)
 
-    
+@cli.command('data_stat')
+@click.argument('datasets', nargs=-1)
+def data_stat(datasets):
+    train, test = dataset.get_data(datasets)
+    print(fmtsize(sum([nda[0].nbytes + nda[1].nbytes for nda in train.take(1).as_numpy_iterator()])))
 if __name__ == "__main__":
     cli()

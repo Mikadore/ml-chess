@@ -1,13 +1,14 @@
-use super::gamedb::serialization::Decoder;
 use super::gamedb::game::{Game, Outcome};
-use std::path::{PathBuf, Path};
+use super::gamedb::serialization::Decoder;
+use std::path::PathBuf;
 use std::sync::{mpsc, Arc, Mutex};
 
-use shakmaty::{Position, Chess, uci::Uci, File, Rank, Square, Color, Role};
 use eyre::Result;
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyList;
-use pyo3::exceptions::PyValueError;
+use shakmaty::{uci::Uci, Chess, Color, File, Position, Rank, Role, Square};
+use std::{fs, io::BufReader};
 
 use numpy::PyArray;
 
@@ -31,26 +32,22 @@ pub fn encode_position(chess: &impl Position) -> EncodedInput {
             let square = Square::from_coords(File::new(x as u32), Rank::new(7 - (y as u32)));
             if let Some(piece) = board.piece_at(square) {
                 match piece.color {
-                    Color::White => {
-                        match piece.role {
-                            Role::Pawn => pos[x][y][0] = 1.0,
-                            Role::Knight => pos[x][y][1] = 1.0,
-                            Role::Bishop => pos[x][y][2] = 1.0,
-                            Role::Rook => pos[x][y][3] = 1.0,
-                            Role::Queen => pos[x][y][4] = 1.0,
-                            Role::King => pos[x][y][5] = 1.0,
-                        }
-                    }
-                    Color::Black => {
-                        match piece.role {
-                            Role::Pawn => pos[x][y][6] = 1.0,
-                            Role::Knight => pos[x][y][7] = 1.0,
-                            Role::Bishop => pos[x][y][8] = 1.0,
-                            Role::Rook => pos[x][y][9] = 1.0,
-                            Role::Queen => pos[x][y][10] = 1.0,
-                            Role::King => pos[x][y][11] = 1.0,
-                        }
-                    }
+                    Color::White => match piece.role {
+                        Role::Pawn => pos[x][y][0] = 1.0,
+                        Role::Knight => pos[x][y][1] = 1.0,
+                        Role::Bishop => pos[x][y][2] = 1.0,
+                        Role::Rook => pos[x][y][3] = 1.0,
+                        Role::Queen => pos[x][y][4] = 1.0,
+                        Role::King => pos[x][y][5] = 1.0,
+                    },
+                    Color::Black => match piece.role {
+                        Role::Pawn => pos[x][y][6] = 1.0,
+                        Role::Knight => pos[x][y][7] = 1.0,
+                        Role::Bishop => pos[x][y][8] = 1.0,
+                        Role::Rook => pos[x][y][9] = 1.0,
+                        Role::Queen => pos[x][y][10] = 1.0,
+                        Role::King => pos[x][y][11] = 1.0,
+                    },
                 }
             }
         }
@@ -70,8 +67,11 @@ pub fn encode_game_positions(game: Vec<u8>) -> (Vec<EncodedInput>, EncodedOutput
     };
 
     for move_ in &game.moves {
-    
-        let uci = Uci::Normal { from: move_.move_from(), to: move_.move_to(), promotion: move_.promotion() };
+        let uci = Uci::Normal {
+            from: move_.move_from(),
+            to: move_.move_to(),
+            promotion: move_.promotion(),
+        };
         let move_ = uci.to_move(&board).unwrap();
         board = board.play(&move_).unwrap();
         positions.push(encode_position(&board));
@@ -80,9 +80,19 @@ pub fn encode_game_positions(game: Vec<u8>) -> (Vec<EncodedInput>, EncodedOutput
     (positions, encoded_out)
 }
 
-pub fn load_encoded_impl<'py>(py: Python<'py>, file_path: &Path, num_threads: usize) -> Result<(Bound<'py, PyList>, Bound<'py, PyList>)> {
-    let decoder = Decoder::open(file_path)?;
-    let games = decoder.raw_iter().collect::<Vec<_>>();
+pub fn load_encoded_impl<'py>(
+    py: Python<'py>,
+    decoder: &mut Decoder<BufReader<fs::File>>,
+    max_games: usize,
+    num_threads: usize,
+) -> Result<(Bound<'py, PyList>, Bound<'py, PyList>)> {
+    let mut games = Vec::with_capacity(max_games);
+    for _ in 0..max_games {
+        match decoder.read_game_raw().unwrap() {
+            Some(g) => games.push(g),
+            None => break,
+        }
+    }
     let num_games = games.len();
     let games = Arc::new(Mutex::new(games));
     let encoded_ins = PyList::empty_bound(py);
@@ -92,17 +102,15 @@ pub fn load_encoded_impl<'py>(py: Python<'py>, file_path: &Path, num_threads: us
         for _ in 0..num_threads.into() {
             let games = Arc::clone(&games);
             let tx = tx.clone();
-            scope.spawn(move || {
-                'outer: loop {
-                    let work = games.lock().unwrap().pop();
-                    match work {
-                        Some(game) => {
-                            let encoded = encode_game_positions(game);
-                            tx.send(encoded).unwrap();
-                        },
-                        None => {
-                            break 'outer;
-                        }
+            scope.spawn(move || 'outer: loop {
+                let work = games.lock().unwrap().pop();
+                match work {
+                    Some(game) => {
+                        let encoded = encode_game_positions(game);
+                        tx.send(encoded).unwrap();
+                    }
+                    None => {
+                        break 'outer;
                     }
                 }
             });
@@ -110,27 +118,51 @@ pub fn load_encoded_impl<'py>(py: Python<'py>, file_path: &Path, num_threads: us
         for _ in 0..num_games {
             let (batch, outcome) = rx.recv().unwrap();
             for pos in batch {
-                encoded_ins.append(PyArray::from_vec3_bound(py, &pos).unwrap()).unwrap();
+                encoded_ins
+                    .append(PyArray::from_vec3_bound(py, &pos).unwrap())
+                    .unwrap();
                 encoded_outs.append(outcome.clone()).unwrap();
             }
         }
     });
     Ok((encoded_ins, encoded_outs))
-}   
-
-#[pyfunction]
-#[pyo3(pass_module)]
-fn load_positions<'py>(module: &Bound<'py, PyModule>, file_path: &str, num_threads: usize) -> PyResult<(Bound<'py, PyList>, Bound<'py, PyList>)> {
-    let file_path = PathBuf::from(file_path.to_string());
-    load_encoded_impl(module.py(), &file_path, num_threads)
-        .map_err(|e| PyValueError::new_err(format!("{:?}", e)))
 }
 
+#[pyclass]
+pub struct PositionLoader {
+    decoder: Decoder<BufReader<fs::File>>,
+    num_threads: usize,
+}
+
+#[pymethods]
+impl PositionLoader {
+    #[new]
+    pub fn new(filepath: &str, num_threads: usize) -> PyResult<Self> {
+        (|| -> Result<Self> {
+            let decoder = Decoder::open(&PathBuf::from(filepath.to_string()))?;
+            Ok(Self {
+                decoder,
+                num_threads,
+            })
+        }())
+        .map_err(|e| PyValueError::new_err(format!("{:?}", e)))
+    }
+
+    fn load_positions<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        max_games: usize,
+    ) -> PyResult<(Bound<'py, PyList>, Bound<'py, PyList>)> {
+        let num_threads = slf.num_threads;
+        load_encoded_impl(slf.py(), &mut slf.decoder, max_games, num_threads)
+            .map_err(|e| PyValueError::new_err(format!("{:?}", e)))
+    }
+}
+
+#[pyfunction]
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let submodule = &PyModule::new_bound(m.py(), "data")?;
 
-    submodule.add_function(wrap_pyfunction!(load_positions, submodule)?)?;
-
+    submodule.add_class::<PositionLoader>()?;
     //submodule.add_class::<Game>()?;
     //submodule.add_class::<GameLoader>()?;
 
