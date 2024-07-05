@@ -80,9 +80,9 @@ fn bin_to_pgn(bin_path: &str, pgn_path: &str, min_elo: i32, max_elo_diff: i32) -
 
 #[pyclass]
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Game {
-    inner: game::Game,
-    outcome: String,
+pub struct Game {
+    pub(crate) inner: game::Game,
+    pub(crate) outcome: String,
 }
 
 impl Game {
@@ -147,7 +147,7 @@ impl GameLoader {
             let decoder = serialization::Decoder::open(&PathBuf::from(file_path))?;
             Ok(Self { decoder })
         }())
-        .map_err(|e| PyValueError::new_err(format!("{:?}", e)))
+        .map_err(|e| PyValueError::new_err(format!("{:#?}", e)))
     }
 
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -160,6 +160,19 @@ impl GameLoader {
             Ok(Some(g)) => Some(Ok(Game::new(g))),
             Ok(None) => None,
         }
+    }
+    
+    fn read_games(mut slf: PyRefMut<'_, Self>, max_games: usize) -> PyResult<Vec<Game>> {
+        (|| -> Result<Vec<Game>> {
+            let mut games = Vec::with_capacity(max_games);
+            for _ in 0..max_games {
+                match slf.decoder.read_game()? {
+                    Some(g) => games.push(Game::new(g)),
+                    None => break,
+                }
+            }
+            Ok(games)
+        }()).map_err(|e| PyValueError::new_err(format!("{:#?}", e)))
     }
 }
 

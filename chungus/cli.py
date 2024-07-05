@@ -1,10 +1,12 @@
-import click, os
+import click, os, time
 from pathlib import Path
 
+import numpy as np
 import chessers
-import data
+import data, model
 
-from util import fmtsize
+
+from util import fmtsize, num_cores
 
 @click.group()
 def cli():
@@ -43,11 +45,44 @@ def pgn_stat(filepath):
     print(f'moves: {moves}')
     
 
-@cli.command('train')
+@cli.command('encode')
 @click.argument('filepath')
+@click.argument('savepath')
 @click.option('--threads', default=None, required=False)
-def train(filepath, threads):
-    positions = data.collect_positions(filepath, threads)
+def encode(filepath, savepath, threads):
+    size = os.stat(filepath).st_size
+    start = time.time()
+    positions, outcomes = data.load_positions(filepath, num_cores() if not threads else int(threads))
+    end = time.time()
+    delta = end - start
+    throughput = size/delta
+    print(f"Processed {len(positions)} ({fmtsize(positions.nbytes + outcomes.nbytes)}b) positions in {delta:.2f}s ({fmtsize(throughput)}b/s)")
+    print(f"Input  shape: {positions.shape}")
+    print(f"Output shape: {outcomes.shape}")
+    np.savez_compressed(savepath, x=positions, y=outcomes)
+    print(f"Saved training data to {savepath}")
 
+@cli.command('train')
+@click.option('--dataset', default='train')
+def train(dataset):
+    net = model.CzecherNet()    
+    data = np.load(f"data/{dataset}.npz")
+    train_x = data['x']
+    train_y = data['y']
+
+    
+    print(f"Loaded training data (in: {train_x.shape}, out: {train_y.shape})")
+    net.show()
+    net.train(train_x, train_y)
+
+@cli.command('model_stat')
+def model_stat():
+    net = model.CzecherNet.load()
+    data = np.load("data/test.npz")
+    test_x = data['x']
+    test_y = data['y']
+    net.evaluate(test_x, test_y)
+
+    
 if __name__ == "__main__":
     cli()

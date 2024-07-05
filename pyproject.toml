@@ -14,10 +14,11 @@ dynamic = ["version"]
 
 dependencies = [
     "python-chess==1.999",
-    "tensorflow==2.16.1",
+    "tensorflow[and-cuda]==2.16.2",
     "numpy==1.26.4",
     "click==8.1.7",
     "maturin==1.6.0",
+    "pydot==2.0.0",
 ]
 
 [tool.maturin]

@@ -9,7 +9,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyList;
 use pyo3::exceptions::PyValueError;
 
-use numpy::{PyArray, PyArrayMethods};
+use numpy::PyArray;
 
 /// Model input layer is 8x8x13
 pub type EncodedInput = Vec<Vec<Vec<f32>>>;
@@ -120,7 +120,7 @@ pub fn load_encoded_impl<'py>(py: Python<'py>, file_path: &Path, num_threads: us
 
 #[pyfunction]
 #[pyo3(pass_module)]
-fn load_encoded<'py>(module: &Bound<'py, PyModule>, file_path: &str, num_threads: usize) -> PyResult<(Bound<'py, PyList>, Bound<'py, PyList>)> {
+fn load_positions<'py>(module: &Bound<'py, PyModule>, file_path: &str, num_threads: usize) -> PyResult<(Bound<'py, PyList>, Bound<'py, PyList>)> {
     let file_path = PathBuf::from(file_path.to_string());
     load_encoded_impl(module.py(), &file_path, num_threads)
         .map_err(|e| PyValueError::new_err(format!("{:?}", e)))
@@ -129,7 +129,7 @@ fn load_encoded<'py>(module: &Bound<'py, PyModule>, file_path: &str, num_threads
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let submodule = &PyModule::new_bound(m.py(), "data")?;
 
-    submodule.add_function(wrap_pyfunction!(load_encoded, submodule)?)?;
+    submodule.add_function(wrap_pyfunction!(load_positions, submodule)?)?;
 
     //submodule.add_class::<Game>()?;
     //submodule.add_class::<GameLoader>()?;
