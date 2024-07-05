@@ -1,10 +1,17 @@
 #!/bin/bash
 export PYTHON_CONFIGURE_OPTS="--enable-shared"
 if [[ -d .venv ]]; then
+    echo "Sourcing .venv/bin/activate"
     source .venv/bin/activate
-    maturin develop
+    echo "Building..."
+    cmdout=$(cargo test --release 2>&1 && maturin develop 2>&1)
+    es=$?
+    if ((es)); then
+        echo >$2 "build error: $cmdout"
+    fi; 
+    echo "Running..."
     python chungus/cli.py $@
-else  
+else
     # Error if venv not present
     echo "Please create a virtual environment in .venv"
 fi
