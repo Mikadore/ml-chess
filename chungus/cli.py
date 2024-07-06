@@ -1,7 +1,8 @@
-import click, os, time
+import click, os, datetime
 from pathlib import Path
 
 import numpy as np
+import tensorflow as tf
 import chessers
 import positions, model, dataset
 
@@ -57,12 +58,20 @@ def encode(filepath, savepath, games):
 @click.argument('datasets', nargs=-1)
 @click.option('--epochs', default=model.CZECHERNET_TRAIN_EPOCHS)
 @click.option('--batch_size', default=model.CZECHERNET_TRAIN_BATCH_SIZE)
-def train(datasets, epochs, batch_size):
+@click.option('--profile', is_flag=True, default=False)
+def train(datasets, epochs, batch_size, profile):
+    if profile:
+        print("Profiling...")
+        logdir = "logs/scalars/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        tf.summary.create_file_writer(logdir)
+        tf.profiler.experimental.start(logdir)
     datasets = [str(dataset) for dataset in datasets]
     print(f"Training using {','.join(datasets)}")
     net = model.CzecherNet()    
     net.show()
     net.train(datasets, epochs=epochs, batch_size=batch_size)
+    if profile:
+        tf.profiler.experimental.stop()
 
 @cli.command('model_stat')
 def model_stat():

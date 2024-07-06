@@ -13,26 +13,39 @@ def get_train_data_npz(datasets):
             if file.startswith(prefix):
                 yield np.load(f"data/train/{file}")
 
-def get_train_data(datasets):
+def get_train_data(datasets, batch_size):
     for data in get_train_data_npz(datasets):
         x = data['x']
         y = data['y']
-        for i in range(x.shape[0]):
-            yield (x[i], y[i]) 
- 
- 
+        num_samples = x.shape[0]
+        for start_idx in range(0, num_samples, batch_size):
+            end_idx = start_idx + batch_size
+            if end_idx < num_samples:
+                yield (x[start_idx:end_idx], y[start_idx:end_idx])
 
-
-def get_test_data():
+def get_test_data(batch_size):
     data = np.load('data/test.npz')
-    return tf.data.Dataset.from_tensor_slices((data['x'], data['y']))
+    x = data['x']
+    y = data['y']
+    num_samples = x.shape[0]
+    for start_idx in range(0, num_samples, batch_size):
+        end_idx = start_idx + batch_size
+        if end_idx < num_samples:
+            yield (x[start_idx:end_idx], y[start_idx:end_idx])
 
 def get_data(datasets, batch_size):
-    dataset = tf.data.Dataset.from_generator(
-        lambda: get_train_data(datasets),
+    train_dataset = tf.data.Dataset.from_generator(
+        lambda: get_train_data(datasets, batch_size),
         output_signature=(
-            tf.TensorSpec(shape=(8, 8, 13), dtype=tf.float32), 
-            tf.TensorSpec(shape=(3,), dtype=tf.float32)
+            tf.TensorSpec(shape=(batch_size, 8, 8, 13), dtype=tf.float32), 
+            tf.TensorSpec(shape=(batch_size, 3,), dtype=tf.float32)
         ),
     ).prefetch(tf.data.AUTOTUNE)
-    return dataset.batch(batch_size), get_test_data().batch(batch_size)
+    test_dataset = tf.data.Dataset.from_generator(
+        lambda: get_test_data(batch_size),
+        output_signature=(
+            tf.TensorSpec(shape=(batch_size, 8, 8, 13), dtype=tf.float32), 
+            tf.TensorSpec(shape=(batch_size, 3,), dtype=tf.float32)
+        ),
+    )
+    return train_dataset, test_dataset
