@@ -84,7 +84,8 @@ def model_stat():
 @cli.command('data_stat')
 @click.argument('datasets', nargs=-1)
 def data_stat(datasets):
-    train, test = dataset.get_data(datasets)
+    train, test = dataset.get_data(datasets, 1)
     print(fmtsize(sum([nda[0].nbytes + nda[1].nbytes for nda in train.take(1).as_numpy_iterator()])))
+    
 if __name__ == "__main__":
     cli()

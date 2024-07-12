@@ -48,22 +48,29 @@ class CzecherNet:
         epochs = kwargs.get("epochs", CZECHERNET_TRAIN_EPOCHS)
         batch_size = kwargs.get("batch_size", CZECHERNET_TRAIN_BATCH_SIZE)
 
+        reduce_lr = callbacks.ReduceLROnPlateau(monitor='loss')
         early_stopping = callbacks.EarlyStopping(monitor='loss', patience=10, restore_best_weights=True)
         checkpoint_cb = callbacks.ModelCheckpoint('best.keras', monitor='loss', save_freq='epoch', verbose=2)
 
         train, test = dataset.get_data(datasets, batch_size)
+        #train_data = np.load("data/train/2019_03.0.npz")
+        #train = tf.data.Dataset.from_tensor_slices((train_data['x'], train_data['y']))
+        #test_data = np.load("data/test.npz")
+        #test = tf.data.Dataset.from_tensor_slices((test_data['x'], test_data['y']))
         
         self.model.fit(
             train,
             epochs=epochs,
+            #batch_size=batch_size,
             validation_data=test,
             callbacks=[
                 early_stopping,
                 checkpoint_cb,
+                reduce_lr,
             ])
         
         self.save()
-        self.evaluate(test)
+        #self.evaluate(test)
     
     def evaluate(self, testdata):
         print(f"Evaluating model performance:")
