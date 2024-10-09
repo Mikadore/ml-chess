@@ -7,7 +7,7 @@ if [[ -d .venv ]]; then
     cmdout=$(cargo test --release 2>&1 && maturin develop 2>&1)
     es=$?
     if ((es)); then
-        echo >$2 "build error: $cmdout"
+        echo "build error: $cmdout"
     fi; 
     echo "Running..."
     python chungus/cli.py $@

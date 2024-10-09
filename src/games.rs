@@ -6,6 +6,8 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
 
+use super::data;
+
 pub mod game;
 pub mod pgn;
 pub mod serialization;
@@ -134,9 +136,8 @@ impl Game {
 }
 
 #[pyclass]
-#[derive(Debug)]
 struct GameLoader {
-    decoder: serialization::Decoder<BufReader<File>>,
+    decoder: serialization::Decoder,
 }
 
 #[pymethods]
@@ -174,17 +175,26 @@ impl GameLoader {
             Ok(games)
         }()).map_err(|e| PyValueError::new_err(format!("{:#?}", e)))
     }
+
+    fn convert_games<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        max_games: usize,
+    ) -> Option<data::TrainData> {
+        let games: Vec<Vec<u8>> = slf.decoder.raw_iter().take(max_games).collect();
+        if games.is_empty() {
+            None
+        } else {
+            Some(data::TrainData::from_games(slf.py(), games))
+        }
+    }
 }
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    let submodule = &PyModule::new_bound(m.py(), "pgn")?;
+    m.add_function(wrap_pyfunction!(pgn_to_bin, m)?)?;
+    m.add_function(wrap_pyfunction!(bin_to_pgn, m)?)?;
 
-    submodule.add_function(wrap_pyfunction!(pgn_to_bin, submodule)?)?;
-    submodule.add_function(wrap_pyfunction!(bin_to_pgn, submodule)?)?;
+    m.add_class::<Game>()?;
+    m.add_class::<GameLoader>()?;
 
-    submodule.add_class::<Game>()?;
-    submodule.add_class::<GameLoader>()?;
-
-    m.add_submodule(submodule)?;
     Ok(())
 }

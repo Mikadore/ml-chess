@@ -1,73 +1,426 @@
-use super::gamedb::game::{Game, Outcome};
-use super::gamedb::serialization::Decoder;
-use std::path::PathBuf;
-use std::sync::{mpsc, Arc, Mutex};
-
 use eyre::Result;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::PyList;
-use shakmaty::{uci::Uci, Chess, Color, File, Position, Rank, Role, Square};
-use std::{fs, io::BufReader};
+use pyo3::types::{PyBytes, PyBytesMethods};
+use std::path::PathBuf;
 
-use numpy::PyArray;
+use super::data;
+use crate::games::game::{Game, Outcome};
+use numpy::ndarray::{array, Array1, Array2, Array3, Array4, Axis};
+use numpy::{PyArray2, PyArray4, PyArrayMethods};
+use serde::{Deserialize, Serialize};
+use shakmaty::{uci::UciMove, Chess, Color, File, Position, Rank, Role, Square};
+use std::sync::{mpsc, Arc, Mutex};
+use std::time::{Duration, Instant};
 
-/// Model input layer is 8x8x13
-pub type EncodedInput = Vec<Vec<Vec<f32>>>;
+pub const FEATURES: usize = 37;
+const F_W_PAWN: usize = 0;
+const F_W_KNIGHT: usize = 1;
+const F_W_BISHOP: usize = 2;
+const F_W_ROOK: usize = 3;
+const F_W_QUEEN: usize = 4;
+const F_W_KING: usize = 5;
+const F_B_PAWN: usize = 6;
+const F_B_KNIGHT: usize = 7;
+const F_B_BISHOP: usize = 8;
+const F_B_ROOK: usize = 9;
+const F_B_QUEEN: usize = 10;
+const F_B_KING: usize = 11;
+const F_TURN: usize = 12;
+const F_ATTACKED_BY_W_PAWN: usize = 13;
+const F_ATTACKED_BY_W_KNIGHT: usize = 14;
+const F_ATTACKED_BY_W_BISHOP: usize = 15;
+const F_ATTACKED_BY_W_ROOK: usize = 16;
+const F_ATTACKED_BY_W_QUEEN: usize = 17;
+const F_ATTACKED_BY_W_KING: usize = 18;
+const F_ATTACKED_BY_B_PAWN: usize = 19;
+const F_ATTACKED_BY_B_KNIGHT: usize = 20;
+const F_ATTACKED_BY_B_BISHOP: usize = 21;
+const F_ATTACKED_BY_B_ROOK: usize = 22;
+const F_ATTACKED_BY_B_QUEEN: usize = 23;
+const F_ATTACKED_BY_B_KING: usize = 24;
+const F_ACCESSIBLE_BY_W_PAWN: usize = 25;
+const F_ACCESSIBLE_BY_W_KNIGHT: usize = 26;
+const F_ACCESSIBLE_BY_W_BISHOP: usize = 27;
+const F_ACCESSIBLE_BY_W_ROOK: usize = 28;
+const F_ACCESSIBLE_BY_W_QUEEN: usize = 29;
+const F_ACCESSIBLE_BY_W_KING: usize = 30;
+const F_ACCESSIBLE_BY_B_PAWN: usize = 31;
+const F_ACCESSIBLE_BY_B_KNIGHT: usize = 32;
+const F_ACCESSIBLE_BY_B_BISHOP: usize = 33;
+const F_ACCESSIBLE_BY_B_ROOK: usize = 34;
+const F_ACCESSIBLE_BY_B_QUEEN: usize = 35;
+const F_ACCESSIBLE_BY_B_KING: usize = 36;
 
-/// Model output layer is 3
-pub type EncodedOutput = Vec<f32>;
+pub type NNInput = Array3<f32>;
+pub type NNInputBatch = Array4<f32>;
+pub type NNOutput = Array1<f32>;
+pub type NNOutputBatch = Array2<f32>;
 
-pub fn encode_position(chess: &impl Position) -> EncodedInput {
-    let mut pos = vec![vec![vec![0.0; 13]; 8]; 8];
+pub fn encode_position(chess: &impl Position) -> NNInput {
+    let mut encoded = Array3::zeros((8, 8, FEATURES));
     let board = chess.board();
     let turn_value = match chess.turn() {
         Color::Black => -1.0,
         Color::White => 1.0,
     };
 
+    for move_ in chess.legal_moves() {
+        let piece = board.piece_at(move_.from().unwrap()).unwrap();
+        let filter = match piece.color {
+            Color::White => match piece.role {
+                Role::Pawn => F_ACCESSIBLE_BY_W_PAWN,
+                Role::Knight => F_ACCESSIBLE_BY_W_KNIGHT,
+                Role::Bishop => F_ACCESSIBLE_BY_W_BISHOP,
+                Role::Rook => F_ACCESSIBLE_BY_W_ROOK,
+                Role::Queen => F_ACCESSIBLE_BY_W_QUEEN,
+                Role::King => F_ACCESSIBLE_BY_W_KING,
+            },
+            Color::Black => match piece.role {
+                Role::Pawn => F_ACCESSIBLE_BY_B_PAWN,
+                Role::Knight => F_ACCESSIBLE_BY_B_KNIGHT,
+                Role::Bishop => F_ACCESSIBLE_BY_B_BISHOP,
+                Role::Rook => F_ACCESSIBLE_BY_B_ROOK,
+                Role::Queen => F_ACCESSIBLE_BY_B_QUEEN,
+                Role::King => F_ACCESSIBLE_BY_B_KING,
+            },
+        };
+        let (x, y) = (
+            move_.to().file().into(),
+            7 - Into::<usize>::into(move_.to().rank()),
+        );
+        encoded[[x, y, filter]] = 1.0;
+    }
+
     for x in 0..8 {
         for y in 0..8 {
-            pos[x][y][12] = turn_value;
+            encoded[[x, y, F_TURN]] = turn_value;
             let square = Square::from_coords(File::new(x as u32), Rank::new(7 - (y as u32)));
             if let Some(piece) = board.piece_at(square) {
                 match piece.color {
                     Color::White => match piece.role {
-                        Role::Pawn => pos[x][y][0] = 1.0,
-                        Role::Knight => pos[x][y][1] = 1.0,
-                        Role::Bishop => pos[x][y][2] = 1.0,
-                        Role::Rook => pos[x][y][3] = 1.0,
-                        Role::Queen => pos[x][y][4] = 1.0,
-                        Role::King => pos[x][y][5] = 1.0,
+                        Role::Pawn => encoded[[x, y, F_W_PAWN]] = 1.0,
+                        Role::Knight => encoded[[x, y, F_W_KNIGHT]] = 1.0,
+                        Role::Bishop => encoded[[x, y, F_W_BISHOP]] = 1.0,
+                        Role::Rook => encoded[[x, y, F_W_ROOK]] = 1.0,
+                        Role::Queen => encoded[[x, y, F_W_QUEEN]] = 1.0,
+                        Role::King => encoded[[x, y, F_W_KING]] = 1.0,
                     },
                     Color::Black => match piece.role {
-                        Role::Pawn => pos[x][y][6] = 1.0,
-                        Role::Knight => pos[x][y][7] = 1.0,
-                        Role::Bishop => pos[x][y][8] = 1.0,
-                        Role::Rook => pos[x][y][9] = 1.0,
-                        Role::Queen => pos[x][y][10] = 1.0,
-                        Role::King => pos[x][y][11] = 1.0,
+                        Role::Pawn => encoded[[x, y, F_B_PAWN]] = 1.0,
+                        Role::Knight => encoded[[x, y, F_B_KNIGHT]] = 1.0,
+                        Role::Bishop => encoded[[x, y, F_B_BISHOP]] = 1.0,
+                        Role::Rook => encoded[[x, y, F_B_ROOK]] = 1.0,
+                        Role::Queen => encoded[[x, y, F_B_QUEEN]] = 1.0,
+                        Role::King => encoded[[x, y, F_B_KING]] = 1.0,
                     },
+                }
+                let mut attacks_bb = board.attacks_from(square);
+                let attack_filter = match piece.color {
+                    Color::White => match piece.role {
+                        Role::Pawn => F_ATTACKED_BY_W_PAWN,
+                        Role::Knight => F_ATTACKED_BY_W_KNIGHT,
+                        Role::Bishop => F_ATTACKED_BY_W_BISHOP,
+                        Role::Rook => F_ATTACKED_BY_W_ROOK,
+                        Role::Queen => F_ATTACKED_BY_W_QUEEN,
+                        Role::King => F_ATTACKED_BY_W_KING,
+                    },
+                    Color::Black => match piece.role {
+                        Role::Pawn => F_ATTACKED_BY_B_PAWN,
+                        Role::Knight => F_ATTACKED_BY_B_KNIGHT,
+                        Role::Bishop => F_ATTACKED_BY_B_BISHOP,
+                        Role::Rook => F_ATTACKED_BY_B_ROOK,
+                        Role::Queen => F_ATTACKED_BY_B_QUEEN,
+                        Role::King => F_ATTACKED_BY_B_KING,
+                    },
+                };
+                while let Some(sq) = attacks_bb.pop_front() {
+                    let (x, y) = (sq.file().into(), 7 - Into::<usize>::into(sq.rank()));
+                    encoded[[x, y, attack_filter]] = 1.0;
                 }
             }
         }
     }
-    pos
+    encoded
 }
 
-pub fn encode_game_positions(game: Vec<u8>) -> (Vec<EncodedInput>, EncodedOutput) {
+pub fn encode_outcome(outcome: Outcome) -> NNOutput {
+    match outcome {
+        Outcome::BlackWin => array![0.0, 0.0, 1.0],
+        Outcome::WhiteWin => array![1.0, 0.0, 0.0],
+        Outcome::Draw => array![0.0, 1.0, 0.0],
+    }
+}
+
+#[pyclass]
+pub struct TrainData {
+    ins: Py<PyArray4<f32>>,
+    outs: Py<PyArray2<f32>>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct TrainDataFileHeader {
+    magic: [u8; 16],
+    ins_shape: [usize; 4],
+    outs_shape: [usize; 2],
+}
+
+impl TrainData {
+    pub fn from_games(py: Python<'_>, games: Vec<Vec<u8>>) -> Self {
+        let num_games = games.len();
+        let games = Arc::new(Mutex::new(games));
+        let mut inputs = Array4::zeros((0, 8, 8, data::FEATURES));
+        let mut outputs = Array2::zeros((0, 3));
+        std::thread::scope(|scope| {
+            let (tx, rx) = mpsc::channel();
+            for _ in 0..std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(1)
+            {
+                let games = Arc::clone(&games);
+                let tx = tx.clone();
+                scope.spawn(move || 'outer: loop {
+                    let work = games.lock().unwrap().pop();
+                    match work {
+                        Some(game) => {
+                            let encoded = encode_game_positions(game);
+                            tx.send(encoded).unwrap();
+                        }
+                        None => {
+                            break 'outer;
+                        }
+                    }
+                });
+            }
+            for _ in 0..num_games {
+                let (batch, outcome) = rx.recv().unwrap();
+                for pos in batch {
+                    inputs.push(Axis(0), pos.view()).unwrap();
+                    outputs.push(Axis(0), outcome.view()).unwrap();
+                }
+            }
+        });
+        println!(
+            "Processed {} games into {} positions",
+            num_games,
+            inputs.shape()[0]
+        );
+
+        let x = PyArray4::from_owned_array_bound(py, inputs);
+        let y = PyArray2::from_owned_array_bound(py, outputs);
+
+        let x_bytes = x.readonly().as_array().len() * std::mem::size_of::<f32>();
+        let y_bytes = y.readonly().as_array().len() * std::mem::size_of::<f32>();
+
+        println!(
+            "Total memory of encoded positions: {:.2} Mb",
+            (x_bytes + y_bytes) as f64 / (1024.0 * 1024.0)
+        );
+
+        Self {
+            ins: x.unbind(),
+            outs: y.unbind(),
+        }
+    }
+
+    pub fn encode_bin(&self, py: Python<'_>) -> Vec<u8> {
+        let ins = self.ins.bind(py).readonly();
+        let ins = ins.as_array();
+        let outs = self.outs.bind(py).readonly();
+        let outs = outs.as_array();
+
+        assert!(ins.shape().len() == 4);
+        assert!(outs.shape().len() == 2);
+
+        let header = TrainDataFileHeader {
+            magic: *b"mychesstraindata",
+            ins_shape: ins.shape().try_into().unwrap(),
+            outs_shape: outs.shape().try_into().unwrap(),
+        };
+        let mut header = bincode::serialize(&header).unwrap();
+
+        let ins = ins.to_slice().unwrap();
+        let outs = outs.to_slice().unwrap();
+
+        let mut data = Vec::with_capacity(
+            ins.len() * std::mem::size_of::<f32>() + outs.len() * std::mem::size_of::<f32>(),
+        );
+        for &f in ins {
+            data.extend_from_slice(&f.to_le_bytes());
+        }
+
+        for &f in outs {
+            data.extend_from_slice(&f.to_le_bytes());
+        }
+
+        let mut data = zstd::stream::encode_all(data.as_slice(), 0).unwrap();
+
+        let mut encoded= header.len().to_le_bytes().to_vec();
+        encoded.append(&mut header);
+        encoded.append(&mut data);
+
+        encoded
+    }
+
+    fn bytes_to_floats(data: &[u8]) -> Vec<f32> {
+        assert!(data.len() % std::mem::size_of::<f32>() == 0);
+        data.chunks_exact(std::mem::size_of::<f32>())
+            .map(TryInto::<[u8; 4]>::try_into)
+            .map(Result::unwrap)
+            .map(f32::from_le_bytes)
+            .collect()
+    }
+
+    pub fn decode_bin(data: &[u8]) -> (NNInputBatch, NNOutputBatch) {
+        let header_offset = std::mem::size_of::<usize>();
+        let header_size = usize::from_le_bytes(data[..header_offset].try_into().unwrap());
+        let data_offset = header_offset + header_size;
+        let header =
+            bincode::deserialize::<TrainDataFileHeader>(&data[header_offset..data_offset]).unwrap();
+        let data = &data[data_offset..];
+        let data = zstd::stream::decode_all(data).unwrap();
+
+        assert!(header.magic == *b"mychesstraindata");
+        assert_eq!(header.ins_shape[1], 8);
+        assert_eq!(header.ins_shape[2], 8);
+        assert_eq!(header.ins_shape[3], data::FEATURES);
+        assert_eq!(header.outs_shape[1], 3);
+
+        let ins_bytes = header.ins_shape.iter().product::<usize>() * std::mem::size_of::<f32>();
+        let outs_bytes = header.outs_shape.iter().product::<usize>() * std::mem::size_of::<f32>();
+
+        assert_eq!(data.len(), ins_bytes + outs_bytes);
+
+        let ins = Self::bytes_to_floats(&data[..ins_bytes]);
+        let ins = Array4::from_shape_vec(header.ins_shape, ins).unwrap();
+
+        let outs = Self::bytes_to_floats(&data[ins_bytes..]);
+        let outs = Array2::from_shape_vec(header.outs_shape, outs).unwrap();
+        (ins, outs)
+    }
+
+    pub fn decode_bin_py(py: Python<'_>, data: &[u8]) -> Self {
+        let (ins, outs) = Self::decode_bin(data);
+        let ins = PyArray4::from_owned_array_bound(py, ins).unbind();
+        let outs = PyArray2::from_owned_array_bound(py, outs).unbind();
+
+        TrainData { ins, outs }
+    }
+}
+
+#[pymethods]
+impl TrainData {
+    fn get_ins(slf: PyRef<'_, Self>) -> Bound<'_, PyArray4<f32>> {
+        let ins = slf.ins.clone_ref(slf.py());
+        ins.into_bound(slf.py())
+    }
+
+    fn get_outs(slf: PyRef<'_, Self>) -> Bound<'_, PyArray2<f32>> {
+        let outs = slf.outs.clone_ref(slf.py());
+        outs.into_bound(slf.py())
+    }
+
+    fn to_bytes(slf: PyRef<'_, Self>) -> PyResult<Bound<'_, PyBytes>> {
+        let data = slf.encode_bin(slf.py());
+        PyBytes::new_bound_with(slf.py(), data.len(), |buf| {
+            buf.copy_from_slice(&data);
+            Ok(())
+        })
+    }
+
+    #[staticmethod]
+    fn from_bytes(py: Python<'_>, data: &Bound<'_, PyBytes>) -> Self {
+        Self::decode_bin_py(py, data.as_bytes())
+    }
+
+    fn save(slf: PyRef<'_, Self>, path: &str) -> PyResult<()> {
+        let path = PathBuf::from(path);
+        std::fs::write(path, slf.encode_bin(slf.py()))
+            .map_err(|e| PyValueError::new_err(format!("{:#?}", e)))?;
+        Ok(())
+    }
+
+    #[staticmethod]
+    fn load(py: Python<'_>, path: &str) -> PyResult<Self> {
+        let path = PathBuf::from(path);
+        let data = std::fs::read(path).map_err(|e| PyValueError::new_err(format!("{:#?}", e)))?;
+        Ok(Self::decode_bin_py(py, &data))
+    }
+}
+
+#[pyclass]
+pub struct TrainDataLoader {
+    receiver: mpsc::Receiver<(NNInputBatch, NNOutputBatch)>,
+    // This is a kinda hacky way to inform the worker thread
+    // when we want more data. CBA with a condvar right now
+    read_count: Arc<Mutex<usize>>,
+}
+
+#[pymethods]
+impl TrainDataLoader {
+    #[new]
+    fn new(mut files: Vec<PathBuf>, prefetch: usize) -> Self {
+        let (tx, receiver) = mpsc::channel();
+        let read_count = Arc::new(Mutex::new(0));
+        {
+            let read_count = read_count.clone();
+
+            std::thread::spawn(move || {
+                let mut sent_count = 0;
+
+                while !files.is_empty() {
+                    let read = {
+                        let mg = read_count.lock().unwrap();
+                        *mg
+                    };
+                    if (sent_count - read) < prefetch {
+                        let file = files.pop().unwrap();
+                        let data = std::fs::read(file).unwrap();
+                        let start = Instant::now();
+                        let batch = TrainData::decode_bin(&data);
+                        let delta = start.elapsed().as_millis() as f64 / 1000.0;
+                        println!("Loaded batch in {:.2} seconds", delta);
+                        tx.send(batch).unwrap();
+                        sent_count += 1;
+                    } else {
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
+                }
+            });
+        }
+        Self { receiver, read_count }
+    }
+
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+
+    fn __next__(slf: PyRefMut<'_, Self>) -> Option<TrainData> {
+        match slf.receiver.recv() {
+            Ok(batch) => {
+                {
+                    let mut mg = slf.read_count.lock().unwrap();
+                    *mg = *mg + 1;
+                }
+                Some(TrainData {
+                    ins: PyArray4::from_owned_array_bound(slf.py(), batch.0).unbind(),
+                    outs: PyArray2::from_owned_array_bound(slf.py(), batch.1).unbind(),
+                })
+            },
+            Err(_) => None,
+        }
+    }
+}
+
+
+
+pub fn encode_game_positions(game: Vec<u8>) -> (Vec<NNInput>, NNOutput) {
     let game = bincode::deserialize::<Game>(&game).unwrap();
     let mut board = Chess::new();
     let mut positions = Vec::with_capacity(game.moves.len());
 
-    let encoded_out = match game.outcome {
-        Outcome::BlackWin => vec![0.0, 0.0, 1.0],
-        Outcome::WhiteWin => vec![1.0, 0.0, 0.0],
-        Outcome::Draw => vec![0.0, 1.0, 0.0],
-    };
-
     for move_ in &game.moves {
-        let uci = Uci::Normal {
+        let uci = UciMove::Normal {
             from: move_.move_from(),
             to: move_.move_to(),
             promotion: move_.promotion(),
@@ -77,95 +430,11 @@ pub fn encode_game_positions(game: Vec<u8>) -> (Vec<EncodedInput>, EncodedOutput
         positions.push(encode_position(&board));
     }
 
-    (positions, encoded_out)
+    (positions, encode_outcome(game.outcome))
 }
 
-pub fn load_encoded_impl<'py>(
-    py: Python<'py>,
-    decoder: &mut Decoder<BufReader<fs::File>>,
-    max_games: usize,
-    num_threads: usize,
-) -> Result<(Bound<'py, PyList>, Bound<'py, PyList>)> {
-    let mut games = Vec::with_capacity(max_games);
-    for _ in 0..max_games {
-        match decoder.read_game_raw().unwrap() {
-            Some(g) => games.push(g),
-            None => break,
-        }
-    }
-    let num_games = games.len();
-    let games = Arc::new(Mutex::new(games));
-    let encoded_ins = PyList::empty_bound(py);
-    let encoded_outs = PyList::empty_bound(py);
-    std::thread::scope(|scope| {
-        let (tx, rx) = mpsc::channel();
-        for _ in 0..num_threads.into() {
-            let games = Arc::clone(&games);
-            let tx = tx.clone();
-            scope.spawn(move || 'outer: loop {
-                let work = games.lock().unwrap().pop();
-                match work {
-                    Some(game) => {
-                        let encoded = encode_game_positions(game);
-                        tx.send(encoded).unwrap();
-                    }
-                    None => {
-                        break 'outer;
-                    }
-                }
-            });
-        }
-        for _ in 0..num_games {
-            let (batch, outcome) = rx.recv().unwrap();
-            for pos in batch {
-                encoded_ins
-                    .append(PyArray::from_vec3_bound(py, &pos).unwrap())
-                    .unwrap();
-                encoded_outs.append(outcome.clone()).unwrap();
-            }
-        }
-    });
-    Ok((encoded_ins, encoded_outs))
-}
-
-#[pyclass]
-pub struct PositionLoader {
-    decoder: Decoder<BufReader<fs::File>>,
-    num_threads: usize,
-}
-
-#[pymethods]
-impl PositionLoader {
-    #[new]
-    pub fn new(filepath: &str, num_threads: usize) -> PyResult<Self> {
-        (|| -> Result<Self> {
-            let decoder = Decoder::open(&PathBuf::from(filepath.to_string()))?;
-            Ok(Self {
-                decoder,
-                num_threads,
-            })
-        }())
-        .map_err(|e| PyValueError::new_err(format!("{:?}", e)))
-    }
-
-    fn load_positions<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        max_games: usize,
-    ) -> PyResult<(Bound<'py, PyList>, Bound<'py, PyList>)> {
-        let num_threads = slf.num_threads;
-        load_encoded_impl(slf.py(), &mut slf.decoder, max_games, num_threads)
-            .map_err(|e| PyValueError::new_err(format!("{:?}", e)))
-    }
-}
-
-#[pyfunction]
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    let submodule = &PyModule::new_bound(m.py(), "data")?;
-
-    submodule.add_class::<PositionLoader>()?;
-    //submodule.add_class::<Game>()?;
-    //submodule.add_class::<GameLoader>()?;
-
-    m.add_submodule(submodule)?;
+    m.add_class::<TrainData>()?;
+    m.add_class::<TrainDataLoader>()?;
     Ok(())
 }

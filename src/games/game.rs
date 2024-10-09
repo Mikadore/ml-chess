@@ -1,6 +1,6 @@
 use eyre::Result;
 use serde::{Deserialize, Serialize};
-use shakmaty::{san::San, uci::Uci, Chess, Position};
+use shakmaty::{san::San, uci::UciMove, Chess, Position};
 use std::io::Write;
 
 /// Bit field representing a UCI move:
@@ -239,7 +239,7 @@ impl Game {
 
             let mut move_pair = move_pair.iter();
             let white_move = move_pair.next().unwrap();
-            let white_move = Uci::Normal {
+            let white_move = UciMove::Normal {
                 from: white_move.move_from(),
                 to: white_move.move_to(),
                 promotion: white_move.promotion(),
@@ -251,7 +251,7 @@ impl Game {
             pos = pos.play(&white_move).unwrap();
 
             if let Some(black_move) = move_pair.next() {
-                let black_move = Uci::Normal {
+                let black_move = UciMove::Normal {
                     from: black_move.move_from(),
                     to: black_move.move_to(),
                     promotion: black_move.promotion(),

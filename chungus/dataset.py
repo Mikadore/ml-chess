@@ -1,23 +1,17 @@
 import numpy as np
 import tensorflow as tf
-import os
+import os, time
+import chessers
+from pathlib import Path
 
-CZECHERNET_DATA_PREFIXES = ["2019_03", "2019_07", "2022_02", "2022_03"]
-
-
-def get_train_data(datasets):
-    files = list()
-    for prefix in datasets:        
-        if prefix not in CZECHERNET_DATA_PREFIXES:
-            raise ValueError(f"Dataset prefix '{prefix}' does not exist (valid: {CZECHERNET_DATA_PREFIXES})")
-        for file in os.listdir('data/train'):
-            if file.startswith(prefix):
-                files.append(file)
-    for file in files:
-        path = f"data/train/{file}"
-        print(f"Loading training data from {path}")
-        data = np.load(path)
-        yield (data['x'], data['y'])
+def get_train_data():
+    files = os.listdir('data/train/2022_02')
+    files.sort()
+    files = list(map(lambda f: Path(f'data/train/2022_02/{f}').resolve(), files))
+    print(f"Using training data from {files}")
+    loader = chessers.TrainDataLoader(files, 3)
+    for td in loader:
+        yield td.get_ins(), td.get_outs()
         
 
 #def get_train_data(datasets, batch_size):
@@ -31,16 +25,16 @@ def get_train_data(datasets):
 #                yield (x[start_idx:end_idx], y[start_idx:end_idx])
 
 def get_test_data():
-    data = np.load('data/test.npz')
-    return tf.data.Dataset.from_tensor_slices((data['x'], data['y']))
+    data = chessers.TrainData.load('data/test.bin')
+    return tf.data.Dataset.from_tensor_slices((data.get_ins(), data.get_outs()))
 
-def get_data(datasets, batch_size):
+def get_data(batch_size):
     train_dataset = tf.data.Dataset.from_generator(
-        lambda: get_train_data(datasets),
+        lambda: get_train_data(),
         output_signature=(
-            tf.TensorSpec(shape=(None, 8, 8, 13), dtype=tf.float32), 
+            tf.TensorSpec(shape=(None, 8, 8, 37), dtype=tf.float32), 
             tf.TensorSpec(shape=(None, 3,), dtype=tf.float32)
         ),
-    ).flat_map(lambda x, y: tf.data.Dataset.from_tensor_slices((x, y))).prefetch(tf.data.AUTOTUNE).batch(batch_size).shuffle(10_000)
+    ).flat_map(lambda x, y: tf.data.Dataset.from_tensor_slices((x, y))).prefetch(tf.data.AUTOTUNE).shuffle(10_000).batch(batch_size, drop_remainder=True)
     
     return train_dataset, get_test_data().batch(batch_size)

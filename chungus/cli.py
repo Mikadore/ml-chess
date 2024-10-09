@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 import tensorflow as tf
 import chessers
-import positions, model, dataset
+import model, dataset
 
 
 from util import fmtsize, num_cores
@@ -48,30 +48,34 @@ def pgn_stat(filepath):
 
 @cli.command('encode')
 @click.argument('filepath')
-@click.argument('savepath')
-@click.option('--games', default='10000')
-def encode(filepath, savepath, games):
-    positions.encode(filepath, int(games), savepath)
+@click.argument('name')
+@click.option('--games', default='1000')
+def encode(filepath, name, games):
+    game_loader = chessers.GameLoader(filepath)
+    dir = 'data/train' / Path(name)
+    if not dir.exists():
+        dir.mkdir()
+    i = 0
+    data = game_loader.convert_games(int(games))
+    while data:
+        data.save(str(dir / f'{i:03}.bin'))
+        data = game_loader.convert_games(int(games))
+        i += 1
+    
+
+    
+
+    
 
 
 @cli.command('train')
-@click.argument('datasets', nargs=-1)
+#@click.argument('datasets', nargs=-1)
 @click.option('--epochs', default=model.CZECHERNET_TRAIN_EPOCHS)
 @click.option('--batch_size', default=model.CZECHERNET_TRAIN_BATCH_SIZE)
-@click.option('--profile', is_flag=True, default=False)
-def train(datasets, epochs, batch_size, profile):
-    if profile:
-        print("Profiling...")
-        logdir = "logs/scalars/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-        tf.summary.create_file_writer(logdir)
-        tf.profiler.experimental.start(logdir)
-    datasets = [str(dataset) for dataset in datasets]
-    print(f"Training using {','.join(datasets)}")
+def train(epochs, batch_size):
     net = model.CzecherNet()    
     net.show()
-    net.train(datasets, epochs=epochs, batch_size=batch_size)
-    if profile:
-        tf.profiler.experimental.stop()
+    net.train(epochs=epochs, batch_size=batch_size)
 
 @cli.command('model_stat')
 def model_stat():
@@ -80,12 +84,6 @@ def model_stat():
     test_x = data['x']
     test_y = data['y']
     net.evaluate(test_x, test_y)
-
-@cli.command('data_stat')
-@click.argument('datasets', nargs=-1)
-def data_stat(datasets):
-    train, test = dataset.get_data(datasets, 1)
-    print(fmtsize(sum([nda[0].nbytes + nda[1].nbytes for nda in train.take(1).as_numpy_iterator()])))
     
 if __name__ == "__main__":
     cli()

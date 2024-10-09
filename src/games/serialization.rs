@@ -52,21 +52,22 @@ impl<W: Write> Drop for Encoder<W> {
     }
 }
 
-#[derive(Debug)]
-pub struct Decoder<R: Read> {
-    inner: R,
+type DynReader = Box<dyn Read + Send>;
+
+pub struct Decoder {
+    inner: DynReader,
 }
 
-impl Decoder<BufReader<File>> {
-    pub fn open(p: &Path) -> Result<Decoder<BufReader<File>>> {
+impl Decoder {
+    pub fn open(p: &Path) -> Result<Decoder> {
         let f = OpenOptions::new().read(true).open(p)?;
         let r = BufReader::new(f);
-        Decoder::start(r)
+        Decoder::start(Box::new(r))
     }
 }
 
-impl<R: Read> Decoder<R> {
-    pub fn start(mut r: R) -> Result<Self> {
+impl Decoder {
+    pub fn start(mut r: DynReader) -> Result<Self> {
         let mut buf = [0; MAGIC.len()];
         r.read_exact(&mut buf)?;
         ensure!(buf == MAGIC, "File format corrupted");
@@ -98,23 +99,23 @@ impl<R: Read> Decoder<R> {
         }
     }
 
-    pub fn raw_iter(self) -> RawGameIter<R> {
+    pub fn raw_iter(&mut self) -> RawGameIter<'_> {
         RawGameIter { inner: self }
     }
 }
 
-pub struct RawGameIter<R: Read> {
-    inner: Decoder<R>
+pub struct RawGameIter<'a> {
+    inner: &'a mut Decoder
 }
 
-impl<R: Read> Iterator for RawGameIter<R> {
+impl<'a> Iterator for RawGameIter<'a> {
     type Item = Vec<u8>;
     fn next(&mut self) -> Option<Self::Item> {
         self.inner.read_game_raw().unwrap()
     }
 }
 
-impl<R: Read> Iterator for Decoder<R> {
+impl Iterator for Decoder {
     type Item = Game;
     fn next(&mut self) -> Option<Self::Item> {
         self.read_game().unwrap()
@@ -122,7 +123,7 @@ impl<R: Read> Iterator for Decoder<R> {
 }
 
 #[cfg(test)]
-pub fn decode_bin(r: impl Read) -> Result<Vec<Game>> {
+pub fn decode_bin(r: DynReader) -> Result<Vec<Game>> {
     let mut dec = Decoder::start(r)?;
     let mut games = Vec::new();
     while let Some(game) = dec.read_game()? {
@@ -136,7 +137,7 @@ fn test_identical_decoding() {
     use std::io::Cursor;
 
     let test_bin = include_bytes!("testfiles/test.bin");
-    let test_bin = Cursor::new(test_bin);
+    let test_bin = Box::new(Cursor::new(test_bin));
 
     let mut bin_games = vec![];
     let mut decoder = Decoder::start(test_bin).unwrap();
@@ -183,7 +184,8 @@ fn test_identity() {
     let len = encoder.bytes_written();
     drop(encoder);
 
-    let mut decoder = Decoder::start(Cursor::new(&buf[..len])).unwrap();
+    let cursor = Cursor::new((&buf[..len]).to_vec());
+    let mut decoder = Decoder::start(Box::new(cursor)).unwrap();
     let mut games = original_games.into_iter();
     while let Some(g) = decoder.read_game().unwrap() {
         assert_eq!(g, games.next().unwrap());
@@ -193,7 +195,7 @@ fn test_identity() {
 #[test]
 fn test_visitor() {
     use std::io::Cursor;
-    let cursor = Cursor::new(include_bytes!("testfiles/single.bin"));
+    let cursor = Box::new(Cursor::new(include_bytes!("testfiles/single.bin")));
     let games = decode_bin(cursor).unwrap();
     assert_eq!(games.len(), 1);
 
