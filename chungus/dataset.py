@@ -5,7 +5,7 @@ import chessers
 from pathlib import Path
 
 def get_train_data(prefetch_data_files: int):
-    files = Path('.').glob('data/train/*/*.bin')
+    files = list(Path('.').glob('data/train/*/*.bin'))
     files.sort()
     loader = chessers.TrainDataLoader(files, prefetch_data_files)
     for td in loader:
