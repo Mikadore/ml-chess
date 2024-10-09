@@ -380,12 +380,18 @@ impl TrainData {
     }
 }
 
+#[derive(Clone, Copy)]
+struct ReadSend {
+    read: usize,
+    sent: usize,
+}
+
 #[pyclass]
 pub struct TrainDataLoader {
     receiver: mpsc::Receiver<(NNInputBatch, NNOutputBatch)>,
     // This is a kinda hacky way to inform the worker thread
     // when we want more data. CBA with a condvar right now
-    read_count: Arc<Mutex<usize>>,
+    read_sent_count: Arc<Mutex<ReadSend>>,
 }
 
 #[pymethods]
@@ -393,24 +399,23 @@ impl TrainDataLoader {
     #[new]
     fn new(files: Vec<PathBuf>, prefetch: usize) -> Self {
         let (tx, receiver) = mpsc::channel();
-        let read_count = Arc::new(Mutex::new(0));
+        let read_sent_count = Arc::new(Mutex::new(ReadSend { read: 0, sent: 0 }));
         {
             let files = Arc::new(Mutex::new(files));
             for _ in 0..prefetch {
                 let files = Arc::clone(&files);
-                let read_count = Arc::clone(&read_count);
+                let read_sent_count = Arc::clone(&read_sent_count);
                 let tx = tx.clone();
                 std::thread::spawn(move || {
-                    let mut sent_count = 0;
                     loop {
                         if files.lock().unwrap().is_empty() {
                             break
                         }
-                        let read = {
-                            let mg = read_count.lock().unwrap();
+                        let read_sent = {
+                            let mg = read_sent_count.lock().unwrap();
                             *mg
                         };
-                        if (sent_count - read) < prefetch {
+                        if (read_sent.sent - read_sent.read) < prefetch {
                             let file = {
                                 let mut mg = files.lock().unwrap();
                                 match mg.pop() {
@@ -424,7 +429,10 @@ impl TrainDataLoader {
                             let delta = start.elapsed().as_millis() as f64 / 1000.0;
                             println!("Loaded batch in {:.2} seconds", delta);
                             tx.send(batch).unwrap();
-                            sent_count += 1;
+                            {
+                                let mut mg = read_sent_count.lock().unwrap();
+                                mg.sent += 1;
+                            }
                         } else {
                             std::thread::sleep(Duration::from_millis(100));
                         }
@@ -432,7 +440,7 @@ impl TrainDataLoader {
                 });
             }
         }
-        Self { receiver, read_count }
+        Self { receiver, read_sent_count }
     }
 
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -443,8 +451,8 @@ impl TrainDataLoader {
         match slf.receiver.recv() {
             Ok(batch) => {
                 {
-                    let mut mg = slf.read_count.lock().unwrap();
-                    *mg = *mg + 1;
+                    let mut mg = slf.read_sent_count.lock().unwrap();
+                    mg.read += 1;
                 }
                 Some(TrainData {
                     ins: PyArray4::from_owned_array_bound(slf.py(), batch.0).unbind(),
