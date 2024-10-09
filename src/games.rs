@@ -5,7 +5,6 @@ use pyo3::prelude::*;
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
-
 use super::data;
 
 pub mod game;
@@ -184,7 +183,7 @@ impl GameLoader {
         if games.is_empty() {
             None
         } else {
-            Some(data::TrainData::from_games(slf.py(), games))
+            Some(data::TrainData::from_games_py(slf.py(), games))
         }
     }
 }

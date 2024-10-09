@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 use super::data;
 use crate::games::game::{Game, Outcome};
+use crate::games::serialization::Decoder;
 use numpy::ndarray::{array, Array1, Array2, Array3, Array4, Axis};
 use numpy::{PyArray2, PyArray4, PyArrayMethods};
 use serde::{Deserialize, Serialize};
@@ -166,7 +167,7 @@ struct TrainDataFileHeader {
 }
 
 impl TrainData {
-    pub fn from_games(py: Python<'_>, games: Vec<Vec<u8>>) -> Self {
+    pub fn from_games(games: Vec<Vec<u8>>) -> (NNInputBatch, NNOutputBatch) {
         let num_games = games.len();
         let games = Arc::new(Mutex::new(games));
         let mut inputs = Array4::zeros((0, 8, 8, data::FEATURES));
@@ -206,29 +207,26 @@ impl TrainData {
             inputs.shape()[0]
         );
 
-        let x = PyArray4::from_owned_array_bound(py, inputs);
-        let y = PyArray2::from_owned_array_bound(py, outputs);
-
-        let x_bytes = x.readonly().as_array().len() * std::mem::size_of::<f32>();
-        let y_bytes = y.readonly().as_array().len() * std::mem::size_of::<f32>();
+        let x_bytes = inputs.len() * std::mem::size_of::<f32>();
+        let y_bytes = outputs.len() * std::mem::size_of::<f32>();
 
         println!(
             "Total memory of encoded positions: {:.2} Mb",
             (x_bytes + y_bytes) as f64 / (1024.0 * 1024.0)
         );
 
-        Self {
-            ins: x.unbind(),
-            outs: y.unbind(),
-        }
+        (inputs, outputs)
     }
 
-    pub fn encode_bin(&self, py: Python<'_>) -> Vec<u8> {
-        let ins = self.ins.bind(py).readonly();
-        let ins = ins.as_array();
-        let outs = self.outs.bind(py).readonly();
-        let outs = outs.as_array();
+    pub fn from_games_py(py: Python<'_>, games: Vec<Vec<u8>>) -> Self {
+        let (ins, outs) = Self::from_games(games);
+        let ins = PyArray4::from_owned_array_bound(py, ins).unbind();
+        let outs = PyArray2::from_owned_array_bound(py, outs).unbind();
 
+        TrainData { ins, outs }
+    }
+
+    pub fn encode_bin(ins: NNInputBatch, outs: NNOutputBatch) -> Vec<u8> {
         assert!(ins.shape().len() == 4);
         assert!(outs.shape().len() == 2);
 
@@ -239,8 +237,8 @@ impl TrainData {
         };
         let mut header = bincode::serialize(&header).unwrap();
 
-        let ins = ins.to_slice().unwrap();
-        let outs = outs.to_slice().unwrap();
+        let ins = ins.as_slice().unwrap();
+        let outs = outs.as_slice().unwrap();
 
         let mut data = Vec::with_capacity(
             ins.len() * std::mem::size_of::<f32>() + outs.len() * std::mem::size_of::<f32>(),
@@ -260,6 +258,12 @@ impl TrainData {
         encoded.append(&mut data);
 
         encoded
+    }
+
+    pub fn encode_bin_py(&self, py: Python<'_>) -> Vec<u8> {
+        let ins = self.ins.bind(py).readonly().as_array().to_owned();
+        let outs = self.outs.bind(py).readonly().as_array().to_owned();
+        Self::encode_bin(ins, outs)
     }
 
     fn bytes_to_floats(data: &[u8]) -> Vec<f32> {
@@ -321,7 +325,7 @@ impl TrainData {
     }
 
     fn to_bytes(slf: PyRef<'_, Self>) -> PyResult<Bound<'_, PyBytes>> {
-        let data = slf.encode_bin(slf.py());
+        let data = slf.encode_bin_py(slf.py());
         PyBytes::new_bound_with(slf.py(), data.len(), |buf| {
             buf.copy_from_slice(&data);
             Ok(())
@@ -335,7 +339,7 @@ impl TrainData {
 
     fn save(slf: PyRef<'_, Self>, path: &str) -> PyResult<()> {
         let path = PathBuf::from(path);
-        std::fs::write(path, slf.encode_bin(slf.py()))
+        std::fs::write(path, slf.encode_bin_py(slf.py()))
             .map_err(|e| PyValueError::new_err(format!("{:#?}", e)))?;
         Ok(())
     }
@@ -345,6 +349,34 @@ impl TrainData {
         let path = PathBuf::from(path);
         let data = std::fs::read(path).map_err(|e| PyValueError::new_err(format!("{:#?}", e)))?;
         Ok(Self::decode_bin_py(py, &data))
+    }
+
+    #[staticmethod]
+    fn convert_games_and_save<'py>(_py: Python<'_>, path: PathBuf, max_games: usize, name: &str) -> PyResult<()> {
+        let games: Vec<Vec<u8>> = Decoder::open(&path).unwrap().raw_iter().collect();
+        let name = name.to_string();
+        let is_done_saving = Arc::new(Mutex::new(false));
+        let (tx, rx) = mpsc::channel();
+        {
+            let is_done_saving = Arc::clone(&is_done_saving);
+            std::thread::spawn(move || {
+                let mut i = 0;
+                while let Ok((ins, outs)) = rx.recv() {
+                    let data = TrainData::encode_bin(ins, outs);
+                    std::fs::write(format!("data/train/{name}/{i}.bin"), &data).unwrap();
+                    i += 1;
+                }
+                *is_done_saving.lock().unwrap() = true;
+            });
+        }
+        for batch in games.chunks_exact(max_games) {
+            let data = data::TrainData::from_games(batch.to_vec());
+            tx.send(data).unwrap();
+        }
+        while *is_done_saving.lock().unwrap() {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        Ok(())
     }
 }
 

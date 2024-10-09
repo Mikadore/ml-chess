@@ -51,17 +51,10 @@ def pgn_stat(filepath):
 @click.argument('name')
 @click.option('--games', default='1000')
 def encode(filepath, name, games):
-    game_loader = chessers.GameLoader(filepath)
     dir = 'data/train' / Path(name)
     if not dir.exists():
         dir.mkdir()
-    i = 0
-    data = game_loader.convert_games(int(games))
-    while data:
-        data.save(str(dir / f'{i:03}.bin'))
-        data = game_loader.convert_games(int(games))
-        i += 1
-    
+    chessers.TrainData.convert_games_and_save(filepath, int(games), name) 
 
     
 
