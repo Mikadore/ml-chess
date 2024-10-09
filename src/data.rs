@@ -391,34 +391,46 @@ pub struct TrainDataLoader {
 #[pymethods]
 impl TrainDataLoader {
     #[new]
-    fn new(mut files: Vec<PathBuf>, prefetch: usize) -> Self {
+    fn new(files: Vec<PathBuf>, prefetch: usize) -> Self {
         let (tx, receiver) = mpsc::channel();
         let read_count = Arc::new(Mutex::new(0));
         {
-            let read_count = read_count.clone();
-
-            std::thread::spawn(move || {
-                let mut sent_count = 0;
-
-                while !files.is_empty() {
-                    let read = {
-                        let mg = read_count.lock().unwrap();
-                        *mg
-                    };
-                    if (sent_count - read) < prefetch {
-                        let file = files.pop().unwrap();
-                        let data = std::fs::read(file).unwrap();
-                        let start = Instant::now();
-                        let batch = TrainData::decode_bin(&data);
-                        let delta = start.elapsed().as_millis() as f64 / 1000.0;
-                        println!("Loaded batch in {:.2} seconds", delta);
-                        tx.send(batch).unwrap();
-                        sent_count += 1;
-                    } else {
-                        std::thread::sleep(Duration::from_millis(100));
+            let files = Arc::new(Mutex::new(files));
+            for _ in 0..prefetch {
+                let files = Arc::clone(&files);
+                let read_count = Arc::clone(&read_count);
+                let tx = tx.clone();
+                std::thread::spawn(move || {
+                    let mut sent_count = 0;
+                    loop {
+                        if files.lock().unwrap().is_empty() {
+                            break
+                        }
+                        let read = {
+                            let mg = read_count.lock().unwrap();
+                            *mg
+                        };
+                        if (sent_count - read) < prefetch {
+                            let file = {
+                                let mut mg = files.lock().unwrap();
+                                match mg.pop() {
+                                    Some(f) => f,
+                                    None => break,
+                                }
+                            };
+                            let data = std::fs::read(file).unwrap();
+                            let start = Instant::now();
+                            let batch = TrainData::decode_bin(&data);
+                            let delta = start.elapsed().as_millis() as f64 / 1000.0;
+                            println!("Loaded batch in {:.2} seconds", delta);
+                            tx.send(batch).unwrap();
+                            sent_count += 1;
+                        } else {
+                            std::thread::sleep(Duration::from_millis(100));
+                        }
                     }
-                }
-            });
+                });
+            }
         }
         Self { receiver, read_count }
     }
