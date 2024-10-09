@@ -56,7 +56,7 @@ class CzecherNet:
         early_stopping = callbacks.EarlyStopping(monitor='loss', patience=10, restore_best_weights=True, verbose=1)
         checkpoint_cb = callbacks.ModelCheckpoint('best.keras', monitor='loss', save_freq='epoch', verbose=1)
 
-        train, test = dataset.get_data(batch_size)
+        train, test = dataset.get_data(batch_size, prefetch_data_files)
         
         self.model.fit(
             train,
