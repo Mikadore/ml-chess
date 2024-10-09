@@ -72,10 +72,11 @@ def encode(filepath, name, games):
 #@click.argument('datasets', nargs=-1)
 @click.option('--epochs', default=model.CZECHERNET_TRAIN_EPOCHS)
 @click.option('--batch_size', default=model.CZECHERNET_TRAIN_BATCH_SIZE)
-def train(epochs, batch_size):
+@click.option('--prefetch_data_files', default=model.CZECHERNET_TRAIN_PREFETCH_FILES)
+def train(epochs, batch_size, prefetch_data_files):
     net = model.CzecherNet()    
     net.show()
-    net.train(epochs=epochs, batch_size=batch_size)
+    net.train(epochs=epochs, batch_size=batch_size, prefetch_data_files=prefetch_data_files)
 
 @cli.command('model_stat')
 def model_stat():

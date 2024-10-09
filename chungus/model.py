@@ -7,6 +7,7 @@ import dataset, chessers
 CZECHERNET_FILTERS = 256
 CZECHERNET_TRAIN_BATCH_SIZE = 64
 CZECHERNET_TRAIN_EPOCHS = 50
+CZECHERNET_TRAIN_PREFETCH_FILES = 3
 
 CZECHERNET_CHECKPOINT_FILE = "data/checkpoint.weights.h5"
 
@@ -47,6 +48,7 @@ class CzecherNet:
     def train(self, **kwargs):
         epochs = kwargs.get("epochs", CZECHERNET_TRAIN_EPOCHS)
         batch_size = kwargs.get("batch_size", CZECHERNET_TRAIN_BATCH_SIZE)
+        prefetch_data_files = kwargs.get("prefetch_data_files", CZECHERNET_TRAIN_PREFETCH_FILES)
 
         print(f"Epochs = {epochs}, Batch size = {batch_size}")
         

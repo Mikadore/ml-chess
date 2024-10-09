@@ -1,15 +1,13 @@
 import numpy as np
 import tensorflow as tf
-import os, time
+import os
 import chessers
 from pathlib import Path
 
-def get_train_data():
-    files = os.listdir('data/train/2022_02')
+def get_train_data(prefetch_data_files: int):
+    files = Path('.').glob('data/train/*/*.bin')
     files.sort()
-    files = list(map(lambda f: Path(f'data/train/2022_02/{f}').resolve(), files))
-    print(f"Using training data from {files}")
-    loader = chessers.TrainDataLoader(files, 3)
+    loader = chessers.TrainDataLoader(files, prefetch_data_files)
     for td in loader:
         yield td.get_ins(), td.get_outs()
         
@@ -28,9 +26,9 @@ def get_test_data():
     data = chessers.TrainData.load('data/test.bin')
     return tf.data.Dataset.from_tensor_slices((data.get_ins(), data.get_outs()))
 
-def get_data(batch_size):
+def get_data(batch_size: int, prefetch_data_files: int):
     train_dataset = tf.data.Dataset.from_generator(
-        lambda: get_train_data(),
+        lambda: get_train_data(prefetch_data_files),
         output_signature=(
             tf.TensorSpec(shape=(None, 8, 8, 37), dtype=tf.float32), 
             tf.TensorSpec(shape=(None, 3,), dtype=tf.float32)
