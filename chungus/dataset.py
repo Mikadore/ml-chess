@@ -32,6 +32,6 @@ def get_data(batch_size: int, prefetch_data_files: int):
             tf.TensorSpec(shape=(None, 8, 8, 37), dtype=tf.float32), 
             tf.TensorSpec(shape=(None, 3,), dtype=tf.float32)
         ),
-    ).flat_map(lambda x, y: tf.data.Dataset.from_tensor_slices((x, y))).shuffle(10_000).batch(batch_size, drop_remainder=True)#.prefetch(tf.data.AUTOTUNE)
+    ).flat_map(lambda x, y: tf.data.Dataset.from_tensor_slices((x, y))).shuffle(10_000).batch(batch_size, drop_remainder=True).prefetch(tf.data.AUTOTUNE)
     
     return train_dataset, get_test_data().batch(batch_size)

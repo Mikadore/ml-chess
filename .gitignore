@@ -1,7 +1,8 @@
 .github
 .venv
 data
-
+logs
+best.keras
 **/__pycache__
 **/target
 *.ipynb

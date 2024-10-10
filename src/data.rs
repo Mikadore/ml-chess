@@ -442,7 +442,7 @@ impl TrainDataLoader {
                                 mg.sent += 1;
                             }
                         } else {
-                            std::thread::sleep(Duration::from_millis(100));
+                            std::thread::sleep(Duration::from_millis(50));
                         }
                     }
                 });
@@ -466,10 +466,13 @@ impl TrainDataLoader {
         match slf.receiver.recv() {
             Ok(batch) => {
                 debug!("Read batch in {:.2}s", now.elapsed().as_secs() as f64 / 1000.0);
-                Some((
+                let now = Instant::now();
+                let ret = Some((
                     PyArray4::from_owned_array_bound(slf.py(), batch.0),
                     PyArray2::from_owned_array_bound(slf.py(), batch.1),
-                ))
+                ));
+                debug!("Conversion to python took {:.3}", now.elapsed().as_secs() as f64 / 1000.0);
+                ret
             },
             Err(_) => None,
         }
