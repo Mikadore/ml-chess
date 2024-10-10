@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use shakmaty::{uci::UciMove, Chess, Color, File, Position, Rank, Role, Square};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
+use tracing::{info, debug};
 
 pub const FEATURES: usize = 37;
 const F_W_PAWN: usize = 0;
@@ -201,7 +202,7 @@ impl TrainData {
                 }
             }
         });
-        println!(
+        info!(
             "Processed {} games into {} positions",
             num_games,
             inputs.shape()[0]
@@ -210,7 +211,7 @@ impl TrainData {
         let x_bytes = inputs.len() * std::mem::size_of::<f32>();
         let y_bytes = outputs.len() * std::mem::size_of::<f32>();
 
-        println!(
+        info!(
             "Total memory of encoded positions: {:.2} Mb",
             (x_bytes + y_bytes) as f64 / (1024.0 * 1024.0)
         );
@@ -355,26 +356,18 @@ impl TrainData {
     fn convert_games_and_save<'py>(_py: Python<'_>, path: PathBuf, max_games: usize, name: &str) -> PyResult<()> {
         let games: Vec<Vec<u8>> = Decoder::open(&path).unwrap().raw_iter().collect();
         let name = name.to_string();
-        let is_done_saving = Arc::new(Mutex::new(false));
-        let (tx, rx) = mpsc::channel();
-        {
-            let is_done_saving = Arc::clone(&is_done_saving);
-            std::thread::spawn(move || {
-                let mut i = 0;
-                while let Ok((ins, outs)) = rx.recv() {
-                    let data = TrainData::encode_bin(ins, outs);
-                    std::fs::write(format!("data/train/{name}/{i}.bin"), &data).unwrap();
-                    i += 1;
-                }
-                *is_done_saving.lock().unwrap() = true;
-            });
-        }
-        for batch in games.chunks_exact(max_games) {
+        let mut handles = Vec::with_capacity(games.len());
+        for (i, batch) in games.chunks(max_games).enumerate() {
             let data = data::TrainData::from_games(batch.to_vec());
-            tx.send(data).unwrap();
+            let path = format!("data/train/{name}/{i:03}.bin");
+            handles.push(std::thread::spawn(move || {
+                let data = data::TrainData::encode_bin(data.0, data.1);
+                std::fs::write(path, data).unwrap();
+            }));
         }
-        while *is_done_saving.lock().unwrap() {
-            std::thread::sleep(Duration::from_millis(100));
+        info!("Waiting for files to finish saving");
+        for h in handles {
+            h.join().unwrap();
         }
         Ok(())
     }
@@ -402,7 +395,7 @@ impl TrainDataLoader {
         let read_sent_count = Arc::new(Mutex::new(ReadSend { read: 0, sent: 0 }));
         {
             let files = Arc::new(Mutex::new(files));
-            for _ in 0..prefetch {
+            for _ in 0..prefetch.max(1).min(5) {
                 let files = Arc::clone(&files);
                 let read_sent_count = Arc::clone(&read_sent_count);
                 let tx = tx.clone();
@@ -411,11 +404,11 @@ impl TrainDataLoader {
                         if files.lock().unwrap().is_empty() {
                             break
                         }
-                        let read_sent = {
+                        let ReadSend { read, sent } = {
                             let mg = read_sent_count.lock().unwrap();
                             *mg
                         };
-                        if (read_sent.sent - read_sent.read) < prefetch {
+                        if read > sent || (sent - read) < prefetch {
                             let file = {
                                 let mut mg = files.lock().unwrap();
                                 match mg.pop() {
@@ -423,11 +416,11 @@ impl TrainDataLoader {
                                     None => break,
                                 }
                             };
-                            let data = std::fs::read(file).unwrap();
+                            let data = std::fs::read(&file).unwrap();
                             let start = Instant::now();
                             let batch = TrainData::decode_bin(&data);
                             let delta = start.elapsed().as_millis() as f64 / 1000.0;
-                            println!("Loaded batch in {:.2} seconds", delta);
+                            info!("Loaded {} in {:.2} seconds", file.file_name().unwrap().to_str().unwrap(), delta);
                             tx.send(batch).unwrap();
                             {
                                 let mut mg = read_sent_count.lock().unwrap();
@@ -448,12 +441,16 @@ impl TrainDataLoader {
     }
 
     fn __next__(slf: PyRefMut<'_, Self>) -> Option<TrainData> {
+        debug!("Reading next batch");
+        let now = Instant::now();
+        {
+            let mut mg = slf.read_sent_count.lock().unwrap();
+            debug!("Read {} batches total. Sent {} batches total", mg.read, mg.sent);
+            mg.read += 1;
+        }
         match slf.receiver.recv() {
             Ok(batch) => {
-                {
-                    let mut mg = slf.read_sent_count.lock().unwrap();
-                    mg.read += 1;
-                }
+                debug!("Read batch in {:.2}s", now.elapsed().as_secs() as f64 / 1000.0);
                 Some(TrainData {
                     ins: PyArray4::from_owned_array_bound(slf.py(), batch.0).unbind(),
                     outs: PyArray2::from_owned_array_bound(slf.py(), batch.1).unbind(),
