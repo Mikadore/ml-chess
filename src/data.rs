@@ -267,7 +267,7 @@ impl TrainData {
             data.extend_from_slice(&f.to_le_bytes());
         }
 
-        let mut data = Self::compress(&data);
+        //let mut data = Self::compress(&data);
 
         let mut encoded= header.len().to_le_bytes().to_vec();
         encoded.append(&mut header);
@@ -298,7 +298,7 @@ impl TrainData {
         let header =
             bincode::deserialize::<TrainDataFileHeader>(&data[header_offset..data_offset]).unwrap();
         let data = &data[data_offset..];
-        let data = Self::decompress(data);
+        //let data = Self::decompress(data);
 
         assert!(header.magic == *b"mychesstraindata");
         assert_eq!(header.ins_shape[1], 8);
