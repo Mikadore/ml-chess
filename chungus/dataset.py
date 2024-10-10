@@ -7,9 +7,8 @@ from pathlib import Path
 def get_train_data(prefetch_data_files: int):
     files = list(Path('.').glob('data/train/*/*.bin'))
     files.sort()
-    loader = chessers.TrainDataLoader(files, prefetch_data_files)
-    for td in loader:
-        yield td.get_ins(), td.get_outs()
+    return chessers.TrainDataLoader(files, prefetch_data_files)
+  
         
 
 #def get_train_data(datasets, batch_size):
@@ -33,6 +32,6 @@ def get_data(batch_size: int, prefetch_data_files: int):
             tf.TensorSpec(shape=(None, 8, 8, 37), dtype=tf.float32), 
             tf.TensorSpec(shape=(None, 3,), dtype=tf.float32)
         ),
-    ).flat_map(lambda x, y: tf.data.Dataset.from_tensor_slices((x, y))).prefetch(10).shuffle(10_000).batch(batch_size, drop_remainder=True)
+    ).flat_map(lambda x, y: tf.data.Dataset.from_tensor_slices((x, y))).prefetch(tf.data.AUTOTUNE).shuffle(10_000).batch(batch_size, drop_remainder=True)
     
     return train_dataset, get_test_data().batch(batch_size)

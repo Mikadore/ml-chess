@@ -440,7 +440,7 @@ impl TrainDataLoader {
         slf
     }
 
-    fn __next__(slf: PyRefMut<'_, Self>) -> Option<TrainData> {
+    fn __next__(slf: PyRefMut<'_, Self>) -> Option<(Bound<'_, PyArray4<f32>>, Bound<'_, PyArray2<f32>>)> {
         debug!("Reading next batch");
         let now = Instant::now();
         {
@@ -451,10 +451,10 @@ impl TrainDataLoader {
         match slf.receiver.recv() {
             Ok(batch) => {
                 debug!("Read batch in {:.2}s", now.elapsed().as_secs() as f64 / 1000.0);
-                Some(TrainData {
-                    ins: PyArray4::from_owned_array_bound(slf.py(), batch.0).unbind(),
-                    outs: PyArray2::from_owned_array_bound(slf.py(), batch.1).unbind(),
-                })
+                Some((
+                    PyArray4::from_owned_array_bound(slf.py(), batch.0),
+                    PyArray2::from_owned_array_bound(slf.py(), batch.1),
+                ))
             },
             Err(_) => None,
         }
