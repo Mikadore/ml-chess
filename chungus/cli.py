@@ -1,4 +1,4 @@
-import click, os, datetime
+import click, os, datetime, time
 from pathlib import Path
 
 import numpy as np
@@ -56,6 +56,21 @@ def encode(filepath, name, games):
         dir.mkdir()
     chessers.TrainData.convert_games_and_save(filepath, int(games), name) 
 
+@cli.command('bench_dataset')
+def bench_dataset():
+    tf.profiler.experimental.start('logs')
+    data, _ = dataset.get_data(2048, 16)
+    data = enumerate(data)
+    i = 0
+    while i < 10_000:
+        start = time.time()
+        with tf.profiler.experimental.Trace(f"batch", step_num=i):
+            batch = next(data)
+        delta = time.time() - start
+        if delta > 0.5:
+            print(f"Batch {i} stalled for {delta:.2}s")
+        i += 1
+    tf.profiler.experimental.stop()
     
 
     

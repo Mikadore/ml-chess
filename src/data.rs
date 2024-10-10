@@ -395,7 +395,7 @@ impl TrainDataLoader {
         let read_sent_count = Arc::new(Mutex::new(ReadSend { read: 0, sent: 0 }));
         {
             let files = Arc::new(Mutex::new(files));
-            for _ in 0..prefetch.max(1).min(5) {
+            for _ in 0..prefetch.max(1).min(std::thread::available_parallelism().unwrap().get()) {
                 let files = Arc::clone(&files);
                 let read_sent_count = Arc::clone(&read_sent_count);
                 let tx = tx.clone();
