@@ -3,6 +3,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyBytesMethods};
 use std::path::PathBuf;
+use std::io::{Read, Write};
 
 use super::data;
 use crate::games::game::{Game, Outcome};
@@ -227,6 +228,20 @@ impl TrainData {
         TrainData { ins, outs }
     }
 
+    fn compress(data: &[u8]) -> Vec<u8> {
+        let cursor = std::io::Cursor::new(Vec::new());
+        let mut encoder = lz4_flex::frame::FrameEncoder::new(cursor);
+        encoder.write_all(data).unwrap();
+        encoder.finish().unwrap().into_inner()
+    }
+
+    fn decompress(data: &[u8]) -> Vec<u8> {
+        let mut decoder = lz4_flex::frame::FrameDecoder::new(data);
+        let mut buf = Vec::new();
+        decoder.read_to_end(&mut buf).unwrap();
+        buf
+    }
+
     pub fn encode_bin(ins: NNInputBatch, outs: NNOutputBatch) -> Vec<u8> {
         assert!(ins.shape().len() == 4);
         assert!(outs.shape().len() == 2);
@@ -252,7 +267,7 @@ impl TrainData {
             data.extend_from_slice(&f.to_le_bytes());
         }
 
-        let mut data = zstd::stream::encode_all(data.as_slice(), 0).unwrap();
+        let mut data = Self::compress(&data);
 
         let mut encoded= header.len().to_le_bytes().to_vec();
         encoded.append(&mut header);
@@ -283,7 +298,7 @@ impl TrainData {
         let header =
             bincode::deserialize::<TrainDataFileHeader>(&data[header_offset..data_offset]).unwrap();
         let data = &data[data_offset..];
-        let data = zstd::stream::decode_all(data).unwrap();
+        let data = Self::decompress(data);
 
         assert!(header.magic == *b"mychesstraindata");
         assert_eq!(header.ins_shape[1], 8);

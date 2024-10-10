@@ -58,21 +58,10 @@ def encode(filepath, name, games):
 
 @cli.command('bench_dataset')
 def bench_dataset():
-    tf.profiler.experimental.start('logs')
-    data, _ = dataset.get_data(2048, 16)
-    data = enumerate(data)
-    i = 0
-    while i < 10_000:
-        start = time.time()
-        with tf.profiler.experimental.Trace(f"batch", step_num=i):
-            batch = next(data)
-        delta = time.time() - start
-        if delta > 0.5:
-            print(f"Batch {i} stalled for {delta:.2}s")
-        i += 1
-    tf.profiler.experimental.stop()
-    
-
+    start = time.time()
+    d = chessers.TrainData.load("data/train/2019_07/000.bin")
+    positions = d.get_ins().shape[0]
+    print(f"Loaded {positions} positions in {time.time() - start:.2f} seconds")
     
 
 
